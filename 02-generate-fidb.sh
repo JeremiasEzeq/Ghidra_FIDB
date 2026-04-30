@@ -68,7 +68,7 @@ while IFS="" read -r lib_variant || [[ -n "${lib_variant}" ]]; do
 		read -r pname variant name version arch < <(echo "${lib_variant}" | tr '/' ' ')
 
 		# Generate a .properties file for each library
-		export logs_dir project_dir project langid variant
+		export logs_dir project_dir project langid variant name
 		envsubst < fidb_generation.template > "${project_dir}/CreateMultipleLibraries.properties"
 
 		# All of these files must exist before running the CreateMultipleLibraries script
@@ -92,13 +92,18 @@ while IFS="" read -r lib_variant || [[ -n "${lib_variant}" ]]; do
 			-noanalysis \
 			-scriptPath "ghidra_scripts" \
 			-preScript RepackFidHeadless.java "${output_dir}/${project}.fidb" \
-			-log "${logs_dir}/${project}-generation.log" > /dev/null 2>&1
-		fi
+			-log "${logs_dir}/${project}-repack.log" > /dev/null 2>&1
 
-		if grep -q ERROR "${logs_dir}/${project}-generation.log"; then 
+			if grep -q ERROR "${logs_dir}/${project}-repack.log"; then 
+				rm -f "${output_dir}/${project}.fidb"*
+				exit_with_message "FAILED! Please check logs: ${logs_dir}/${project}-repack.log"
+			fi
+		else
 			rm -f "${output_dir}/${project}.fidb"*
 			exit_with_message "FAILED! Please check logs: ${logs_dir}/${project}-generation.log"
+			
 		fi
+
 	done <<< "${langids}"
 
 	echo "DONE!"
