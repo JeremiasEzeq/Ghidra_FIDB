@@ -73,14 +73,13 @@ setup_library() {
 # ─── Compile functions ───────────────────────────────────────────────────────
 
 compile_openssl() {
-    local compile_log="${logs_dir}/${library}-compile.log"
+    local compile_log="$(pwd)/${logs_dir}/${library}-compile.log"
     local src_path="${src_dir}/${src_subdir}"
 
     log "Configuring OpenSSL ${version}..."
     pushd "${src_path}" > /dev/null
-        ./config \
-            -static
-            no-shared \
+        ./Configure \
+            -static \
             >> "${compile_log}" 2>&1
 
         log "Compiling OpenSSL ${version} (this may take a few minutes)..."
@@ -125,15 +124,6 @@ step_compile() {
         log "Binary already exists, skipping compilation: ${binary}"
         return
     fi
-
-    case "${library}" in
-        openssl)
-            compile_openssl
-            ;;
-        *)
-            die "Unsupported library: '${library}'. Supported: openssl"
-            ;;
-    esac
 
     log "Compiling ${library} ${version}..."
     "compile_${library}"
