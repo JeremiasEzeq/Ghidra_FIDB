@@ -1,10 +1,12 @@
 #!/bin/bash
 
 # compile.sh - Download and compile a library
-# Usage: ./compile.sh <library> <version> [output_base_dir]
+# Usage: ./compile.sh <library> <version> [arch] [output_base_dir]
 #
 # Supported libraries: openssl
-# Example: ./compile.sh openssl 4.0.0
+# Supported architectures: x86_64, aarch64, arm, mips64el
+# Example: ./compile.sh openssl 3.5.0               (default: x86_64)
+#          ./compile.sh openssl 3.5.0 aarch64
 
 set -euo pipefail
 
@@ -16,13 +18,14 @@ check() { command -v "$1" &>/dev/null || die "Required tool not found: $1"; }
 
 # ─── Args ───────────────────────────────────────────────────────────────────
 
-if [[ $# -lt 2 || $# -gt 3 ]]; then
-    die "Usage: ${0} <library> <version> [output_base_dir]"
+if [[ $# -lt 2 || $# -gt 4 ]]; then
+    die "Usage: ${0} <library> <version> [arch] [output_base_dir]"
 fi
 
 library="${1}"
 version="${2}"
-base_dir="${3:-output}"
+arch="${3:-x86_64}"
+base_dir="${4:-output}"
 
 # ─── Check dependencies ─────────────────────────────────────────────────────
 
@@ -30,6 +33,41 @@ check curl
 check tar
 check make
 check envsubst
+
+# ─── Architecture mapping ──────────────────────────────────────────────────
+
+setup_toolchain() {
+    case "${1}" in
+        x86_64)  ;;
+        aarch64)
+            export CC=aarch64-linux-gnu-gcc
+            export AR=aarch64-linux-gnu-ar
+            export RANLIB=aarch64-linux-gnu-ranlib
+            ;;
+        arm)
+            export CC=arm-linux-gnueabihf-gcc
+            export AR=arm-linux-gnueabihf-ar
+            export RANLIB=arm-linux-gnueabihf-ranlib
+            ;;
+        mips64el)
+            export CC=mips64el-linux-gnuabi64-gcc
+            export AR=mips64el-linux-gnuabi64-ar
+            export RANLIB=mips64el-linux-gnuabi64-ranlib
+            ;;
+        *)
+            die "Unsupported architecture: '${1}'. Supported: x86_64, aarch64, arm, mips64el"
+            ;;
+    esac
+}
+
+config_target_of() {
+    case "${1}" in
+        x86_64)   echo "linux-x86_64"   ;;
+        aarch64)  echo "linux-aarch64"  ;;
+        arm)      echo "linux-armv4"    ;;
+        mips64el) echo "linux-mips64"   ;;
+    esac
+}
 
 # ─── Directory layout ───────────────────────────────────────────────────────
 #
@@ -58,7 +96,6 @@ setup_library() {
             src_subdir="openssl-${version}"
             variant="linux"
             name="openssl"
-            arch="x86_64"
             ;;
         *)
             die "Unsupported library: '${library}'. Supported: openssl"
@@ -73,16 +110,15 @@ setup_library() {
 # ─── Compile functions ───────────────────────────────────────────────────────
 
 compile_openssl() {
-    local compile_log="$(pwd)/${logs_dir}/${library}-compile.log"
+    local config_target="$1"
+    local compile_log="$(pwd)/${logs_dir}/${library}-${arch}-compile.log"
     local src_path="${src_dir}/${src_subdir}"
 
-    log "Configuring OpenSSL ${version}..."
+    log "Configuring OpenSSL ${version} for ${arch} (target: ${config_target})..."
     pushd "${src_path}" > /dev/null
-        ./Configure \
-            -static \
-            >> "${compile_log}" 2>&1
+        ./Configure -static no-tests "${config_target}" >> "${compile_log}" 2>&1
 
-        log "Compiling OpenSSL ${version} (this may take a few minutes)..."
+        log "Compiling OpenSSL ${version} for ${arch}..."
         make -j"$(nproc)" >> "${compile_log}" 2>&1
     popd > /dev/null
 }
@@ -96,9 +132,7 @@ step_download() {
         log "Tarball already downloaded, skipping: ${tarball_name}"
     else
         log "Downloading ${library} ${version} from ${tarball_url}..."
-        curl -L --fail --progress-bar \
-            -o "${tarball}" \
-            "${tarball_url}" \
+        curl -L --fail --progress-bar -o "${tarball}" "${tarball_url}" \
             || die "Download failed"
     fi
 
@@ -113,15 +147,29 @@ step_download() {
 
 step_compile() {
     local src_path="${src_dir}/${src_subdir}"
-    local archive_count=$(find "${src_path}" -maxdepth 1 -name '*.a' | wc -l)
+    local arch_marker="${src_path}/.build_arch"
 
-    if [[ "${archive_count}" -gt 0 ]]; then
-        log "Static libraries already built, skipping compilation"
-        return
+    if [[ -f "${arch_marker}" ]]; then
+        local prev_arch
+        prev_arch="$(<"${arch_marker}")"
+        if [[ "${prev_arch}" == "${arch}" ]]; then
+            log "Already compiled for ${arch}, skipping"
+            return
+        fi
     fi
 
-    log "Compiling ${library} ${version}..."
-    "compile_${library}"
+    # Clean stale artifacts from previous (possibly failed) builds
+    if [[ -f "${src_path}/Makefile" ]]; then
+        log "Cleaning stale build artifacts..."
+
+        # If make distclean fails, the script continues
+        make -C "${src_path}" distclean >> "${logs_dir}/${library}-${arch}-compile.log" 2>&1 || true
+    fi
+
+    log "Compiling ${library} ${version} for ${arch}..."
+    setup_toolchain "${arch}"
+    "compile_${library}" "$(config_target_of "${arch}")"
+    echo "${arch}" > "${arch_marker}"
 }
 
 step_extract_objects() {
@@ -163,7 +211,7 @@ step_extract_objects() {
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 main() {
-    log "=== Build for ${library} ${version} ==="
+    log "=== Build for ${library} ${version} (${arch}) ==="
     log "Output directory: ${base_dir}/"
 
     setup_library

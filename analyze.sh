@@ -131,7 +131,7 @@ while read -r langid; do
 	langid_safe="$(echo "${langid}" | tr ':.' '-')"
 	fidb_name="${project}_${langid_safe}.fidb"
 
-	# Generate the properties file directly
+	# Generate the fidb generation template file directly
 	cat > "${project_dir}/CreateMultipleLibraries.properties" <<PROP_EOF
 Duplicate Results File OK = ${logs_dir}/${project}-duplicates.txt
 Do Duplication Detection Do you want to detect duplicates = true
