@@ -23,10 +23,10 @@ if [[ $# -lt 2 || $# -gt 4 ]]; then
     die "Usage: compile.sh <library> <version> [arch] [output_base_dir]"
 fi
 
-library=    "${1}"
-version=    "${2}"
-arch=       "${3:-x86_64}"
-base_dir=   "${4:-output}"
+library="${1}"
+version="${2}"
+arch="${3:-x86_64}"
+base_dir="${4:-output}"
 
 # Check necessary dependencies
 check curl

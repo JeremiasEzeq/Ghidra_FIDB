@@ -12,6 +12,8 @@
 # Examples:
 #   ./test.sh --binary ~/ghidra_home output/sources/openssl-4.0.0-x86_64/apps/openssl output/fid_files/openssl_x86-LE-64-default.fidb
 #   ./test.sh ~/ghidra_home output/bin/openssl/linux/openssl/4.0.0/x86_64 output/fid_files/openssl_x86-LE-64-default.fidb
+#
+#   ./test.sh --binary --instruction-count-threshold 5 ~/ghidra_home output/sources/openssl-4.0.0-x86_64/apps/openssl output/fid_files/openssl_x86-LE-64-default.fidb
 
 # Bash strict mode is used
 set -euo pipefail
@@ -24,9 +26,26 @@ exit_with_message() {
 # Detection of --binary flag
 binary_mode=false
 positional_args=()
+instruction_count_threshold=14.6
+multiple_match_threshold=30
+
+integer_re='^[0-9]+(\.[0-9]+)?$'
+
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--binary) binary_mode=true; shift ;;
+		--instruction-count-threshold)
+			instruction_count_threshold="$2";
+			if ! [[ $instruction_count_threshold =~ $integer_re ]] ; then
+   				exit_with_message "instruction-threshold must be a number"
+			fi;
+			shift 2;;
+		--multiple-match-threshold)
+		multiple_match_threshold="$2";
+		if ! [[ $multiple_match_threshold =~ $integer_re ]] ; then
+			exit_with_message "multiple-match-threshold must be a number"
+		fi;
+		shift 2;;
 		*) positional_args+=("$1"); shift ;;
 	esac
 done
@@ -40,12 +59,12 @@ if [[ $# -lt 3 || $# -gt 6 ]]; then
 fi
 
 # Input arguments saved into variables
-ghidra_home=	"${1}"
-input_path=		"${2}"
-fidb_file=		"${3}"
-generation_log=	"${4:-}"
-arch=			"${5:-x86_64}"
-output_dir=		"${6:-test_output}"
+ghidra_home="${1}"
+input_path="${2}"
+fidb_file="${3}"
+generation_log="${4:-}"
+arch="${5:-x86_64}"
+output_dir="${6:-test_output}"
 
 # Project paths for the fidb analysis
 script_dir="$(cd "$(dirname "${0}")" && pwd)"
@@ -108,6 +127,13 @@ if $binary_mode; then
 	rm -f "${report_file}"
 	printf "\nImporting, registering FIDB, and analyzing...\n"
 
+	# Custom properties file with specified thresholds
+	analysis_props="${output_dir}/fid_analysis.properties"
+	cat > "${analysis_props}" << PROP_EOF
+Function ID.Instruction Count Threshold=${instruction_count_threshold}
+Function ID.Multiple Match Threshold=${multiple_match_threshold}
+PROP_EOF
+
 	"${ghidra_home}/support/analyzeHeadless" \
 		"${project_dir}" "TestProject" \
 		-import "${stripped_binary}" \
@@ -115,6 +141,7 @@ if $binary_mode; then
 		-scriptPath "${script_dir}/ghidra_scripts" \
 		-preScript RegisterFidb.java "${fidb_file}" \
 		-postScript FidbTestReport.java "${report_file}" \
+		-analysisPropertiesFile "${analysis_props}" \
 		-log "${logs_dir}/analysis.log" \
 		-scriptlog "${logs_dir}/scripts.log" \
 		-max-cpu "$(nproc)"

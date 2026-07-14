@@ -41,11 +41,11 @@ if [[ $# -lt 3 || $# -gt 6 ]]; then
 fi
 
 ghidra_home="${1}"
-library=	"${2}"
-version=	"${3}"
-bin_dir=	"${4:-output/bin}"
-arch=		"${5:-x86_64}"
-base_dir=	"${6:-output}"
+library="${2}"
+version="${3}"
+bin_dir="${4:-output/bin}"
+arch="${5:-x86_64}"
+base_dir="${6:-output}"
 
 variant="linux"
 name="${library}"
