@@ -1,34 +1,51 @@
 #!/bin/bash
 
-# analyze.sh - Create a FIDB for a compiled library (e.g., OpenSSL)
-# Usage: ./analyze.sh <ghidra_home> <library> <version> <bin_dir> [arch] [base_dir]
+# analyze.sh - Creates a FIDB for a compiled library
+# Usage:
+#   ./analyze.sh [--binary] <ghidra_home> <library> <version> <bin_dir> [arch] [base_dir]
 #
-# The <bin_dir> is the directory produced by compile.sh (e.g., output/bin/).
+# The <bin_dir> is the directory produced by compile.sh (e.g.: output/bin/).
 # It must contain: <library>/<variant>/<name>/<binary>
 #
+# With --binary, use the compiled binary (with symbols) instead of .o files.
+# The binary path is derived automatically from the library name and version.
+#
 # Examples:
-#   ./analyze.sh ~/ghidra_home openssl 3.5.0 output/bin
-#   ./analyze.sh ~/ghidra_home openssl 3.5.0 output/bin x86_64 output
+#   ./analyze.sh ~/ghidra_home openssl 4.0.0 output/bin
+#   ./analyze.sh --binary ~/ghidra_home openssl 4.0.0 output/bin aarch64 output
 
+# Bash strict mode is used
 set -euo pipefail
+
+# Detection of --binary flag
+binary_mode=false
+positional_args=()
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--binary) binary_mode=true; shift ;;
+		*) positional_args+=("$1"); shift ;;
+	esac
+done
+
+# Reassigns the arguments with the binary flag removed
+set -- "${positional_args[@]}"
 
 exit_with_message() {
 	echo "${1}" >&2
 	exit 1
 }
 
+# Detection of correct number of arguments
 if [[ $# -lt 3 || $# -gt 6 ]]; then
-	exit_with_message "Usage: ${0} <ghidra_home> <library> <version> <bin_dir> [arch] [base_dir]"
+	exit_with_message "Usage: analyze.sh [--binary] <ghidra_home> <library> <version> <bin_dir> [arch] [base_dir]"
 fi
 
-
 ghidra_home="${1}"
-library="${2}"
-version="${3}"
-bin_dir="${4:-output/bin}"
-arch="${5:-x86_64}"
-base_dir="${6:-output}"
-#chmod +x ${ghidra_home}/Ghidra/Features/${arch}
+library=	"${2}"
+version=	"${3}"
+bin_dir=	"${4:-output/bin}"
+arch=		"${5:-x86_64}"
+base_dir=	"${6:-output}"
 
 variant="linux"
 name="${library}"
@@ -38,30 +55,34 @@ if [[ ! -d "${ghidra_home}" ]]; then
 	exit_with_message "Ghidra home directory \"${ghidra_home}\" doesn't exist"
 fi
 
-if [[ ! -d "${bin_dir}" ]]; then
-	exit_with_message "Bin directory \"${bin_dir}\" doesn't exist"
-fi
-
-
-# Check ghidra components
 ghidra_headless="${ghidra_home}/support/analyzeHeadless"
 ghidra_scripts="${ghidra_home}/Ghidra/Features/FunctionID/ghidra_scripts"
 
+# Check ghidra headless utility
 if [[ ! -x "${ghidra_headless}" ]]; then
 	exit_with_message "Can't find 'analyzeHeadless' or it's not executable: ${ghidra_headless}"
 fi
 
+# Check ghidra_scripts directory
 if [[ ! -d "${ghidra_scripts}" ]]; then
 	exit_with_message "FunctionID scripts directory doesn't exist: ${ghidra_scripts}"
 fi
 
 script_dir="$(cd "$(dirname "${0}")" && pwd)"
 
-if [[ ! -f "${script_dir}/fidb_generation.template" ]]; then
-	exit_with_message "fidb_generation.template not found alongside this script"
-fi
+# Library config
+# Maps each library to where its compiled binary lives inside the source tree.
+# Used only in binary mode (--binary).
 
-# ─── Directory layout ────────────────────────────────────────────────────────
+setup_library() {
+	src_subdir="${library}-${version}-${arch}"
+	case "${library}" in
+		openssl) binary_relpath="apps/openssl" ;;
+		*) exit_with_message "Library '${library}' not supported in binary mode" ;;
+	esac
+}
+
+# Directory layout
 # The build directory from compile.sh has this structure:
 #
 #   output/
@@ -76,21 +97,48 @@ output_dir="${base_dir}/fid_files"
 
 mkdir -p "${projects_dir}" "${logs_dir}" "${output_dir}"
 
-# Locate binaries in bin directory
-# Expected structure: bin/<library>/<variant>/<name>/
-binary_root="${bin_dir}/${library}/${variant}/${name}"
+# Source selection
+# Two modes:
+#   objects (default): import .o files from bin/<library>/<variant>/<name>/
+#   binary  (--binary): import a single compiled binary staged at the same depth
 
-if [[ ! -d "${binary_root}" ]]; then
-	exit_with_message "Expected directory not found: ${binary_root}/"
+if $binary_mode; then
+	# Binary mode: derive binary path from library metadata
+	setup_library
+	binary_path="${base_dir}/sources/${src_subdir}/${binary_relpath}"
+	if [[ ! -f "${binary_path}" ]]; then
+		exit_with_message "Binary not found at expected path: ${binary_path}"
+	fi
+
+	# Stage the binary in a temp tree matching the expected depth
+	#   staging/<library>/<variant>/<name>/<version>/<arch>/binary/<binary>
+	#   CreateMultipleLibraries root = /<project>/<variant>/<name>
+	#   "binary/" is at depth 0 → populateLibrary finds the program
+	staging_dir="${base_dir}/staging_${library}_${arch}"
+	rm -rf "${staging_dir}"
+	mkdir -p "${staging_dir}/${library}/${variant}/${name}/${version}/${arch}/binary"
+	cp "${binary_path}" "${staging_dir}/${library}/${variant}/${name}/${version}/${arch}/binary/"
+	printf "\tBinary mode: staged %s\n" "${binary_path}"
+	import_root="${staging_dir}/${library}"
+	binary_root="${staging_dir}/${library}/${variant}/${name}"
+else
+	# Objects mode: use the existing .o files from the compile output
+	if [[ ! -d "${bin_dir}" ]]; then
+		exit_with_message "Bin directory \"${bin_dir}\" doesn't exist"
+	fi
+	binary_root="${bin_dir}/${library}/${variant}/${name}"
+	if [[ ! -d "${binary_root}" ]]; then
+		exit_with_message "Expected directory not found: ${binary_root}/"
+	fi
+	file_count=$(find "${binary_root}" -type f | wc -l)
+	if [[ "${file_count}" -eq 0 ]]; then
+		exit_with_message "No files found in ${binary_root}/"
+	fi
+	printf "\tFound %d files in %s\n" "${file_count}" "${binary_root}"
+	import_root="${bin_dir}/${library}"
 fi
 
-file_count=$(find "${binary_root}" -type f | wc -l)
-if [[ "${file_count}" -eq 0 ]]; then
-	exit_with_message "No files found in ${binary_root}/"
-fi
-printf "\tFound %d files in %s\n" "${file_count}" "${binary_root}"
-
-# ─── Import and analyze ──────────────────────────────────────────────────────
+# Import and analyze
 project="${library}"
 project_dir="${projects_dir}/${project}"
 
@@ -104,11 +152,10 @@ rm -f "${logs_dir}/${project}"*.log
 
 printf "\tImporting and analyzing files\n"
 "${ghidra_headless}" "${project_dir}" "${project}" \
-	-import "${bin_dir}/${project}" \
+	-import "${import_root}" \
 	-recursive \
 	-overwrite \
 	-scriptPath "${ghidra_scripts};${script_dir}/ghidra_scripts" \
-	-postScript MarkLibraryFunctions.java \
 	-scriptlog "${logs_dir}/${project}-scripts.log" \
 	-log "${logs_dir}/${project}-analyze.log" \
 	-max-cpu "$(nproc)"
@@ -177,5 +224,10 @@ PROP_EOF
 	fi
 
 done <<< "${langids}"
+
+# Clean up staging directory in binary mode
+if $binary_mode && [[ -d "${staging_dir}" ]]; then
+	rm -rf "${staging_dir}"
+fi
 
 echo "DONE!"

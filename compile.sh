@@ -1,41 +1,39 @@
 #!/bin/bash
 
 # compile.sh - Download and compile a library
-# Usage: ./compile.sh <library> <version> [arch] [output_base_dir]
+# Usage:
+#        ./compile.sh <library> <version> [arch] [output_base_dir]
 #
 # Supported libraries: openssl
 # Supported architectures: x86_64, aarch64, arm, mips64el
-# Example: ./compile.sh openssl 3.5.0               (default: x86_64)
-#          ./compile.sh openssl 3.5.0 aarch64
-
+# Examples:
+#        ./compile.sh openssl 4.0.0               (default: x86_64)
+#        ./compile.sh openssl 4.0.0 aarch64
+#        ./compile.sh openssl 4.0.0 arm
+# Bash strict mode is used
 set -euo pipefail
 
-# ─── Helpers ────────────────────────────────────────────────────────────────
-
+# Helper functions
 log()   { echo "[$(date '+%H:%M:%S')] $*"; }
 die()   { echo "[ERROR] $*" >&2; exit 1; }
 check() { command -v "$1" &>/dev/null || die "Required tool not found: $1"; }
 
-# ─── Args ───────────────────────────────────────────────────────────────────
-
+# Detect correct number of arguments
 if [[ $# -lt 2 || $# -gt 4 ]]; then
-    die "Usage: ${0} <library> <version> [arch] [output_base_dir]"
+    die "Usage: compile.sh <library> <version> [arch] [output_base_dir]"
 fi
 
-library="${1}"
-version="${2}"
-arch="${3:-x86_64}"
-base_dir="${4:-output}"
+library=    "${1}"
+version=    "${2}"
+arch=       "${3:-x86_64}"
+base_dir=   "${4:-output}"
 
-# ─── Check dependencies ─────────────────────────────────────────────────────
-
+# Check necessary dependencies
 check curl
 check tar
 check make
-check envsubst
 
-# ─── Architecture mapping ──────────────────────────────────────────────────
-
+# Exporting CC, AR and RANLIB, neccesary for cross-compilation in the specified architecture
 setup_toolchain() {
     case "${1}" in
         x86_64)  ;;
@@ -60,6 +58,7 @@ setup_toolchain() {
     esac
 }
 
+# Mapping of input argument architecture
 config_target_of() {
     case "${1}" in
         x86_64)   echo "linux-x86_64"   ;;
@@ -69,33 +68,32 @@ config_target_of() {
     esac
 }
 
-# ─── Directory layout ───────────────────────────────────────────────────────
+#  Directory layout 
 #
 # output/
 # ├── sources/   - downloaded tarballs
 # ├── bin/       - compiled binaries, structured for Ghidra import
-# │   └── <library>/linux/<library>/<version>/  ← the binary goes here
+# │   └── <library>/linux/<library>/<version>/  <- the binary goes here
 # ├── projects/  - Ghidra project files
 # ├── logs/      - all logs
 # └── fid_files/ - final .fidb output
 
-src_dir="${base_dir}/sources"
-bin_dir="${base_dir}/bin"
-projects_dir="${base_dir}/projects"
-logs_dir="${base_dir}/logs"
+src_dir=        "${base_dir}/sources"
+bin_dir=        "${base_dir}/bin"
+projects_dir=   "${base_dir}/projects"
+logs_dir=       "${base_dir}/logs"
 
 mkdir -p "${src_dir}" "${bin_dir}" "${projects_dir}" "${logs_dir}"
 
-# ─── Library-specific config ────────────────────────────────────────────────
-
-setup_library() {
+# Library-specific config 
+setup_library_config() {
     case "${library}" in
         openssl)
-            tarball_url="https://github.com/openssl/openssl/releases/download/openssl-${version}/openssl-${version}.tar.gz"
-            tarball_name="openssl-${version}.tar.gz"
-            src_subdir="openssl-${version}"
-            variant="linux"
-            name="openssl"
+            tarball_url=    "https://github.com/openssl/openssl/releases/download/openssl-${version}/openssl-${version}.tar.gz"
+            tarball_name=   "openssl-${version}.tar.gz"
+            src_subdir=     "openssl-${version}-${arch}"
+            variant=        "linux"
+            name=           "openssl"
             ;;
         *)
             die "Unsupported library: '${library}'. Supported: openssl"
@@ -107,7 +105,9 @@ setup_library() {
     mkdir -p "${binary_dir}"
 }
 
-# ─── Compile functions ───────────────────────────────────────────────────────
+# ==============================================================
+# Library dependent compile functions 
+# ==============================================================
 
 compile_openssl() {
     local config_target="$1"
@@ -123,9 +123,12 @@ compile_openssl() {
     popd > /dev/null
 }
 
-# ─── Pipeline steps ─────────────────────────────────────────────────────────
+# ==============================================================
+# Pipeline steps 
+# ==============================================================
 
-step_download() {
+# Downloads and extracts the tarball of the specified library, if not present
+download_library() {
     local tarball="${src_dir}/${tarball_name}"
 
     if [[ -f "${tarball}" ]]; then
@@ -136,16 +139,25 @@ step_download() {
             || die "Download failed"
     fi
 
-    if [[ ! -d "${src_dir}/${src_subdir}" ]]; then
+	if [[ ! -d "${src_dir}/${src_subdir}" ]]; then
+        local extracted="${src_dir}/${library}-${version}"
+        # Remove stale plain-name dir (from old runs before arch suffix)
+        if [[ -d "${extracted}" ]]; then
+            rm -rf "${extracted}"
+        fi
         log "Extracting ${tarball_name}..."
         tar -xzf "${tarball}" -C "${src_dir}" \
             || die "Extraction failed"
+        # Rename to arch-specific name so each arch keeps its own source tree
+        mv "${extracted}" "${src_dir}/${src_subdir}" \
+            || die "Failed to rename extracted directory"
     else
         log "Source already extracted, skipping."
     fi
 }
 
-step_compile() {
+# Sets up the compilation for the specified library and executes the library dependent compilation function
+compile_library() {
     local src_path="${src_dir}/${src_subdir}"
     local arch_marker="${src_path}/.build_arch"
 
@@ -172,7 +184,8 @@ step_compile() {
     echo "${arch}" > "${arch_marker}"
 }
 
-step_extract_objects() {
+# Extracts .o files from .a files in the library
+extract_objects() {
     local src_path="${src_dir}/${src_subdir}"
 
     log "Extracting .o files from static archives..."
@@ -180,7 +193,10 @@ step_extract_objects() {
     local archive_count=0
     local obj_count=0
     while IFS= read -r -d '' archive; do
+        # The name of the .a file is extracted into archive_base
         local archive_base="$(basename "${archive}")"
+
+        # The .a extension is removed
         archive_base="${archive_base%.*}"
 
         # Create per-archive subdirectory: <version>/<arch>/<archive_name>/
@@ -188,8 +204,9 @@ step_extract_objects() {
         # subfolders at depth 4 from the root folder to find programs.
         local lib_dir="${binary_dir}/${version}/${arch}/${archive_base}"
         mkdir -p "${lib_dir}"
-
         log "  Extracting ${archive_base}... -> ${lib_dir}/"
+
+        # The contents of the .a file are extracted into its lib_dir directory
         ar x "${archive}" --output "${lib_dir}/" 2>/dev/null || true
 
         # Clean non-object artifacts from this archive's output
@@ -204,26 +221,25 @@ step_extract_objects() {
     log "Output: ${binary_dir}/"
 
     if [[ "${obj_count}" -eq 0 ]]; then
-        die "No .o files extracted — check build produced .a archives"
+        die "No .o files extracted. Check build produced .a archives"
     fi
 }
 
-# ─── Main ────────────────────────────────────────────────────────────────────
 
 main() {
     log "=== Build for ${library} ${version} (${arch}) ==="
     log "Output directory: ${base_dir}/"
 
-    setup_library
+    setup_library_config
 
     log "--- Download ---"
-    step_download
+    download_library
 
     log "--- Compile ---"
-    step_compile
+    compile_library
 
     log "--- Extract objects ---"
-    step_extract_objects
+    extract_objects
 
     log "=== Done! ==="
     log "Logs:    ${logs_dir}/"
