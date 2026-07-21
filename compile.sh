@@ -78,10 +78,10 @@ config_target_of() {
 # ├── logs/      - all logs
 # └── fid_files/ - final .fidb output
 
-src_dir=        "${base_dir}/sources"
-bin_dir=        "${base_dir}/bin"
-projects_dir=   "${base_dir}/projects"
-logs_dir=       "${base_dir}/logs"
+src_dir="${base_dir}/sources"
+bin_dir="${base_dir}/bin"
+projects_dir="${base_dir}/projects"
+logs_dir="${base_dir}/logs"
 
 mkdir -p "${src_dir}" "${bin_dir}" "${projects_dir}" "${logs_dir}"
 
@@ -89,11 +89,18 @@ mkdir -p "${src_dir}" "${bin_dir}" "${projects_dir}" "${logs_dir}"
 setup_library_config() {
     case "${library}" in
         openssl)
-            tarball_url=    "https://github.com/openssl/openssl/releases/download/openssl-${version}/openssl-${version}.tar.gz"
-            tarball_name=   "openssl-${version}.tar.gz"
-            src_subdir=     "openssl-${version}-${arch}"
-            variant=        "linux"
-            name=           "openssl"
+            tarball_url="https://github.com/openssl/openssl/releases/download/openssl-${version}/openssl-${version}.tar.gz"
+            tarball_name="openssl-${version}.tar.gz"
+            src_subdir="openssl-${version}-${arch}"
+            variant="linux"
+            name="openssl"
+            ;;
+        curl)
+            tarball_url="https://curl.se/download/curl-${version}.tar.gz"
+            tarball_name="curl-${version}.tar.gz"
+            src_subdir="curl-${version}-${arch}"
+            variant="linux"
+            name="curl"
             ;;
         *)
             die "Unsupported library: '${library}'. Supported: openssl"
@@ -120,6 +127,27 @@ compile_openssl() {
 
         log "Compiling OpenSSL ${version} for ${arch}..."
         make -j"$(nproc)" >> "${compile_log}" 2>&1
+    popd > /dev/null
+}
+
+compile_curl() {
+    local config_target="$1"
+    local compile_log="$(pwd)/${logs_dir}/${library}-${arch}-compile.log"
+    local src_path="${src_dir}/${src_subdir}"
+
+    # Libcurl needs an OpenSSL installation
+    local openssl_path="$(pwd)/$(ls -dt "${src_dir}/openssl-"*-"${arch}" 2>/dev/null | head -1)"
+    if [[ -z "${openssl_path}" ]]; then
+        die "No OpenSSL build found for ${arch}. Run ./compile.sh openssl <ver> ${arch} first"
+    fi
+
+    log "Configuring Libcurl ${version} for ${arch} (target: ${config_target})..."
+    pushd "${src_path}" > /dev/null
+        # ./configure --disable-symbol-hiding --disable-shared --without-libpsl --without-brotli --without-zstd --with-openssl CPPFLAGS="-I/home/jeremias/TFG/Ghidra_FIDB/output/sources/openssl-4.0.0-x86_64/include" LDFLAGS="-L/home/jeremias/TFG/Ghidra_FIDB/output/sources/openssl-4.0.0-x86_64" LIBS="-lssl -lcrypto"
+        ./configure --disable-symbol-hiding --disable-shared --without-libpsl --without-brotli --without-zstd --with-openssl=${openssl_path} CPPFLAGS="-I${openssl_path}/include" LDFLAGS="-L${openssl_path}" >> "${compile_log}" 2>&1
+
+        log "Compiling Libcurl ${version} for ${arch}..."
+        make LIBS="-lssl -lcrypto" -j"$(nproc)" >> "${compile_log}" 2>&1
     popd > /dev/null
 }
 

@@ -5,8 +5,8 @@
 #   --binary:  ./test.sh --binary <ghidra_home> <binary_path> <fidb_file> [generation_log] [arch] [output_dir]
 #   objects:   ./test.sh <ghidra_home> <objects_dir> <fidb_file> [generation_log] [arch] [output_dir]
 #
-# In --binary mode, strips a single compiled binary and tests the FIDB against it.
-# In objects mode, strips all .o files under <objects_dir> and tests the FIDB
+# In --binary mode, the script strips a single compiled binary and tests the FIDB against it.
+# In objects mode, it strips all .o files under <objects_dir> and tests the FIDB
 # against every imported program, aggregating the results.
 #
 # Examples:
@@ -14,7 +14,7 @@
 #   ./test.sh ~/ghidra_home output/bin/openssl/linux/openssl/4.0.0/x86_64 output/fid_files/openssl_x86-LE-64-default.fidb
 #
 #   ./test.sh --binary --instruction-count-threshold 5 ~/ghidra_home output/sources/openssl-4.0.0-x86_64/apps/openssl output/fid_files/openssl_x86-LE-64-default.fidb
-
+#   ./test.sh --binary                                 ~/ghidra_home output/sources/openssl-4.0.0-/apps/openssl output/fid_files/openssl_x86-LE-64-default.fidb
 # Bash strict mode is used
 set -euo pipefail
 

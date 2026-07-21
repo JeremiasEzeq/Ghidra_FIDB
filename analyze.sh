@@ -78,6 +78,7 @@ setup_library() {
 	src_subdir="${library}-${version}-${arch}"
 	case "${library}" in
 		openssl) binary_relpath="apps/openssl" ;;
+		curl) binary_relpath="src/curl" ;;
 		*) exit_with_message "Library '${library}' not supported in binary mode" ;;
 	esac
 }
