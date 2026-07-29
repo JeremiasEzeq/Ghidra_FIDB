@@ -13,6 +13,7 @@
 # Examples:
 #   ./analyze.sh ~/ghidra_home openssl 4.0.0 output/bin
 #   ./analyze.sh --binary ~/ghidra_home openssl 4.0.0 output/bin aarch64 output
+#   ./analyze.sh ~/ghidra_home jsoncpp 1.9.8 output/bin
 
 # Bash strict mode is used
 set -euo pipefail
@@ -77,9 +78,16 @@ script_dir="$(cd "$(dirname "${0}")" && pwd)"
 setup_library() {
 	src_subdir="${library}-${version}-${arch}"
 	case "${library}" in
-		openssl) binary_relpath="apps/openssl" ;;
-		curl) binary_relpath="src/curl" ;;
-		*) exit_with_message "Library '${library}' not supported in binary mode" ;;
+		openssl)
+			binary_relpath="apps/openssl"
+			;;
+		curl | libcurl)
+			binary_relpath="src/curl"
+			library="curl"
+			;;
+		*)
+			exit_with_message "Library '${library}' not supported in binary mode"
+			;;
 	esac
 }
 
@@ -98,14 +106,18 @@ output_dir="${base_dir}/fid_files"
 
 mkdir -p "${projects_dir}" "${logs_dir}" "${output_dir}"
 
-# Source selection
-# Two modes:
-#   objects (default): import .o files from bin/<library>/<variant>/<name>/
-#   binary  (--binary): import a single compiled binary staged at the same depth
+# Two modes for source selection:
+#   objects (default):  import .o files from bin/<library>/<variant>/<name>/
+#   binary  (--binary): import a single compiled binary
 
 if $binary_mode; then
-	# Binary mode: derive binary path from library metadata
+	# Binary mode
 	setup_library
+
+	if [[ -z "${binary_relpath}" ]]; then
+			exit_with_message "--binary mode not supported for '${library}'"
+		fi
+
 	binary_path="${base_dir}/sources/${src_subdir}/${binary_relpath}"
 	if [[ ! -f "${binary_path}" ]]; then
 		exit_with_message "Binary not found at expected path: ${binary_path}"
@@ -115,32 +127,40 @@ if $binary_mode; then
 	#   staging/<library>/<variant>/<name>/<version>/<arch>/binary/<binary>
 	#   CreateMultipleLibraries root = /<project>/<variant>/<name>
 	#   "binary/" is at depth 0 → populateLibrary finds the program
-	staging_dir="${base_dir}/staging_${library}_${arch}"
+
+	staging_dir="${base_dir}/staging_${library}"
 	rm -rf "${staging_dir}"
 	mkdir -p "${staging_dir}/${library}/${variant}/${name}/${version}/${arch}/binary"
 	cp "${binary_path}" "${staging_dir}/${library}/${variant}/${name}/${version}/${arch}/binary/"
+
 	printf "\tBinary mode: staged %s\n" "${binary_path}"
 	import_root="${staging_dir}/${library}"
 	binary_root="${staging_dir}/${library}/${variant}/${name}"
 else
 	# Objects mode: use the existing .o files from the compile output
+
 	if [[ ! -d "${bin_dir}" ]]; then
 		exit_with_message "Bin directory \"${bin_dir}\" doesn't exist"
 	fi
+
 	binary_root="${bin_dir}/${library}/${variant}/${name}"
+
 	if [[ ! -d "${binary_root}" ]]; then
 		exit_with_message "Expected directory not found: ${binary_root}/"
 	fi
+
 	file_count=$(find "${binary_root}" -type f | wc -l)
+
 	if [[ "${file_count}" -eq 0 ]]; then
 		exit_with_message "No files found in ${binary_root}/"
 	fi
+
 	printf "\tFound %d files in %s\n" "${file_count}" "${binary_root}"
 	import_root="${bin_dir}/${library}"
 fi
 
 # Import and analyze
-project="${library}"
+project="${library}_${version}_${arch}"
 project_dir="${projects_dir}/${project}"
 
 echo "Processing lib: ${project}"
@@ -152,6 +172,7 @@ mkdir -p "${project_dir}"
 rm -f "${logs_dir}/${project}"*.log
 
 printf "\tImporting and analyzing files\n"
+
 "${ghidra_headless}" "${project_dir}" "${project}" \
 	-import "${import_root}" \
 	-recursive \
@@ -161,12 +182,14 @@ printf "\tImporting and analyzing files\n"
 	-log "${logs_dir}/${project}-analyze.log" \
 	-max-cpu "$(nproc)"
 
+
 # Check for critical errors during import and analysis
 if grep -q "Analysis succeeded for file" "${logs_dir}/${project}-analyze.log"; then
 	printf "\tAnalysis succeeded\n"
 else
 	exit_with_message "FAILED! Analysis did not succeed. Check logs: ${logs_dir}/${project}-analyze.log"
 fi
+
 
 # Find all unique langids in the analyzer output
 langids=$(sed -nr 's/^.*Using Language\/Compiler: (.+)$/\1/p' "${logs_dir}/${project}-analyze.log" | sed 's/:[^:]*$//' | sort -u)
@@ -177,14 +200,14 @@ while read -r langid; do
 
 	# Create a unique filename per language/compiler, e.g. openssl_x86-LE-64-default.fidb
 	langid_safe="$(echo "${langid}" | tr ':.' '-')"
-	fidb_name="${project}_${langid_safe}.fidb"
+	fidb_name="${library}_${version}_${langid_safe}.fidb"
 
 	# Generate the fidb generation template file directly
 	cat > "${project_dir}/CreateMultipleLibraries.properties" <<PROP_EOF
 Duplicate Results File OK = ${logs_dir}/${project}-duplicates.txt
 Do Duplication Detection Do you want to detect duplicates = true
 Choose destination FidDB Please choose the destination FidDB for population = ${fidb_name}
-Select root folder containing all libraries (at a depth of 3): = /${project}/${variant}/${name}
+Select root folder containing all libraries (at a depth of 3): = /${library}/${variant}/${name}
 Common symbols file (optional): OK = ${project_dir}/common_symbols.txt
 Enter LanguageID To Process Language ID: = ${langid}
 PROP_EOF

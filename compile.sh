@@ -72,8 +72,9 @@ config_target_of() {
 #
 # output/
 # ├── sources/   - downloaded tarballs
+# │   └── <library>-<version>-<arch>  <- the binary goes here
 # ├── bin/       - compiled binaries, structured for Ghidra import
-# │   └── <library>/linux/<library>/<version>/  <- the binary goes here
+# │   └── <library>/linux/<library>/<version>/<arch>  <- the binary goes here
 # ├── projects/  - Ghidra project files
 # ├── logs/      - all logs
 # └── fid_files/ - final .fidb output
@@ -95,15 +96,24 @@ setup_library_config() {
             variant="linux"
             name="openssl"
             ;;
-        curl)
+        libcurl | curl)
             tarball_url="https://curl.se/download/curl-${version}.tar.gz"
             tarball_name="curl-${version}.tar.gz"
             src_subdir="curl-${version}-${arch}"
             variant="linux"
             name="curl"
+            library="curl"
             ;;
+        jsoncpp)
+            tarball_url="https://github.com/open-source-parsers/jsoncpp/archive/refs/tags/${version}.tar.gz"
+            tarball_name="${version}.tar.gz"
+            src_subdir="jsoncpp-${version}-${arch}"
+            variant="linux"
+            name="jsoncpp"
+            ;;
+
         *)
-            die "Unsupported library: '${library}'. Supported: openssl"
+            die "Unsupported library: '${library}'. Supported: openssl, libcurl, jsoncpp"
             ;;
     esac
 
@@ -151,6 +161,28 @@ compile_curl() {
     popd > /dev/null
 }
 
+compile_jsoncpp() {
+    local config_target="$1"
+    local compile_log="$(pwd)/${logs_dir}/${library}-${arch}-compile.log"
+
+    log "Configuring Jsoncpp ${version} for ${arch} (target: ${config_target})..."
+    pushd "${src_path}" > /dev/null
+    cmake -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DBUILD_STATIC_LIBS=ON \
+        -DJSONCPP_WITH_TESTS=OFF \
+        -DJSONCPP_WITH_POST_BUILD_UNITTEST=OFF \
+        -DCMAKE_C_COMPILER="${CC:-gcc}" \
+        -DCMAKE_CXX_COMPILER="${CXX:-g++}" \
+        "${src_path}" \
+        >> "${compile_log}" 2>&1
+
+    cmake --build build -j"$(nproc)" >> "${compile_log}" 2>&1
+    popd > /dev/null
+
+}
+
 # ==============================================================
 # Pipeline steps 
 # ==============================================================
@@ -169,13 +201,16 @@ download_library() {
 
 	if [[ ! -d "${src_dir}/${src_subdir}" ]]; then
         local extracted="${src_dir}/${library}-${version}"
+
         # Remove stale plain-name dir (from old runs before arch suffix)
         if [[ -d "${extracted}" ]]; then
             rm -rf "${extracted}"
         fi
+
         log "Extracting ${tarball_name}..."
         tar -xzf "${tarball}" -C "${src_dir}" \
             || die "Extraction failed"
+        
         # Rename to arch-specific name so each arch keeps its own source tree
         mv "${extracted}" "${src_dir}/${src_subdir}" \
             || die "Failed to rename extracted directory"
@@ -208,6 +243,7 @@ compile_library() {
 
     log "Compiling ${library} ${version} for ${arch}..."
     setup_toolchain "${arch}"
+    
     "compile_${library}" "$(config_target_of "${arch}")"
     echo "${arch}" > "${arch_marker}"
 }

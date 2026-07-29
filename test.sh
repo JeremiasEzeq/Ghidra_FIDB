@@ -12,6 +12,7 @@
 # Examples:
 #   ./test.sh --binary ~/ghidra_home output/sources/openssl-4.0.0-x86_64/apps/openssl output/fid_files/openssl_x86-LE-64-default.fidb
 #   ./test.sh ~/ghidra_home output/bin/openssl/linux/openssl/4.0.0/x86_64 output/fid_files/openssl_x86-LE-64-default.fidb
+#   ./test.sh ~/ghidra_home output/bin/jsoncpp/linux/jsoncpp/1.9.8/x86_64 output/fid_files/jsoncpp_x86-LE-64-default.fidb
 #
 #   ./test.sh --binary --instruction-count-threshold 5 ~/ghidra_home output/sources/openssl-4.0.0-x86_64/apps/openssl output/fid_files/openssl_x86-LE-64-default.fidb
 #   ./test.sh --binary                                 ~/ghidra_home output/sources/openssl-4.0.0-/apps/openssl output/fid_files/openssl_x86-LE-64-default.fidb
@@ -154,6 +155,7 @@ PROP_EOF
 	# 1.3.- Parse postScript output
 	identified_count=$(sed -n 's/^Functions identified by name: \([0-9]*\)/\1/p' "${report_file}" | head -1)
 	program_funcs=$(sed -n 's/^Functions in program: \([0-9]*\)/\1/p' "${report_file}" | head -1)
+	
 
 	printf "\n=== FIDB Test Report ===\n"
 	echo "Binary:              ${binary_name}"
@@ -242,8 +244,8 @@ else
 
 
 	# 2.6.- Compute identification rate vs original
-	if [[ "${total_identified}" -gt 0 && "${original_count}" -gt 0 ]]; then
-		rate=$(echo "scale=1; ${total_identified} * 100 / ${original_count}" | bc 2>/dev/null || echo "?")
+	if [[ "${total_identified}" -gt 0 && "${total_program}" -gt 0 ]]; then
+		rate=$(echo "scale=1; ${total_identified} * 100 / ${total_program}" | bc 2>/dev/null || echo "?")
 		echo "Identification rate: ${rate}%"
 	fi
 
